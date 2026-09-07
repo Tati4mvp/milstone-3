@@ -1,0 +1,197 @@
+---
+title: "The Evolution of AI and Robotics"
+subtitle: "How trial-and-error learning turns robot-arm actions into skills"
+author: ""
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+set.seed(2026)
+
+# This is a reproducible illustration, not a download of the benchmark data.
+task_info <- tibble::tibble(
+  task = c("Push", "Pick and place", "Slide", "Grasp"),
+  difficulty = c(0.63, 0.48, 0.56, 0.38),
+  color = c("#E76F51", "#2A9D8F", "#F4A261", "#264653")
+)
+
+evolution_stages <- tibble::tibble(
+  stage = 1:4,
+  title = c("Human instructions", "Simulation", "AI policy", "Robot skill"),
+  detail = c("Rules written by people", "Safe practice world", "Learns from outcomes", "Acts in the world"),
+  color = c("#264653", "#2A9D8F", "#E9C46A", "#E76F51")
+)
+
+episodes <- tidyr::crossing(
+  task = task_info$task,
+  attempt = 1:120
+) |>
+  left_join(task_info, by = "task") |>
+  mutate(
+    learning = 0.18 * log1p(attempt) / log(121),
+    probability = pmin(0.96, difficulty + learning),
+    success = rbinom(n(), size = 1, prob = probability)
+  )
+
+task_summary <- episodes |>
+  group_by(task, color) |>
+  summarise(
+    successes = sum(success),
+    trials = n(),
+    success_rate = successes / trials,
+    standard_error = sqrt(success_rate * (1 - success_rate) / trials),
+    .groups = "drop"
+  ) |>
+  mutate(
+    lower = pmax(0, success_rate - 1.96 * standard_error),
+    upper = pmin(1, success_rate + 1.96 * standard_error)
+  )
+
+learning_curve <- episodes |>
+  mutate(window = ((attempt - 1) %/% 10) * 10 + 10) |>
+  group_by(task, color, window) |>
+  summarise(success_rate = mean(success), .groups = "drop")
+
+plot_theme <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17, color = "#17324D"),
+    plot.subtitle = element_text(color = "#496579"),
+    axis.title = element_text(face = "bold", color = "#17324D"),
+    axis.text = element_text(color = "#496579"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(12, 18, 12, 12)
+  )
+```
+
+## From programmed motion to learned skill
+
+Robotics data often arrives as a **simulation environment** rather than a rectangular table. Each episode can contain observations, actions, rewards, and a final success signal. That makes the first useful question: *what does one episode look like, and how should success be summarized?*
+
+The OpenAI Fetch and Hand environments are a promising setting for that question. They include robot-arm behaviors such as pushing and grasping, which makes them useful for studying a major shift in robotics: moving from instructions written entirely by people toward AI policies that improve through repeated attempts.
+
+The figures below are a **synthetic demonstration** because the repository does not yet contain episode-level Fetch or Hand data. The structure mirrors the kind of summary we could make after loading real simulation episodes.
+
+## The evolution of an intelligent robot
+
+```{r}
+evolution_links <- tibble::tibble(
+  x = 1:3,
+  xend = 2:4,
+  y = 0.5,
+  yend = 0.5
+)
+
+ggplot() +
+  geom_segment(
+    data = evolution_links,
+    aes(x = x, xend = xend, y = y, yend = yend),
+    arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed"),
+    color = "#9BB3C4",
+    linewidth = 1.2
+  ) +
+  geom_point(
+    data = evolution_stages,
+    aes(x = stage, y = 0.5, fill = color),
+    shape = 21,
+    size = 14,
+    color = "white",
+    stroke = 2.5
+  ) +
+  geom_text(
+    data = evolution_stages,
+    aes(x = stage, y = 0.82, label = title, color = color),
+    fontface = "bold",
+    size = 4.1
+  ) +
+  geom_text(
+    data = evolution_stages,
+    aes(x = stage, y = 0.16, label = detail),
+    color = "#496579",
+    size = 3.5
+  ) +
+  scale_fill_identity() +
+  scale_color_identity() +
+  scale_x_continuous(breaks = evolution_stages$stage, labels = NULL, limits = c(0.65, 4.35)) +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  labs(
+    title = "From instructions to intelligence",
+    subtitle = "AI gives robots a way to improve inside a simulated world before acting in the real one",
+    x = NULL,
+    y = NULL
+  ) +
+  plot_theme +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = margin(24, 18, 24, 18)
+  )
+```
+
+## Which tasks are succeeding?
+
+```{r}
+ggplot(task_summary, aes(x = reorder(task, success_rate), y = success_rate, fill = color)) +
+  geom_col(width = 0.66, show.legend = FALSE) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.10, color = "#17324D", linewidth = 0.7) +
+  geom_text(aes(label = percent(success_rate, accuracy = 1)), hjust = -0.12,
+            color = "#17324D", fontface = "bold", size = 4.2) +
+  coord_flip(clip = "off") +
+  scale_fill_identity() +
+  scale_y_continuous(labels = percent, limits = c(0, 1.08), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title = "Different robot skills evolve at different speeds",
+    subtitle = "Illustrative success rates after 120 simulated AI-policy episodes; bars show 95% intervals",
+    x = NULL,
+    y = "Successful episodes"
+  ) +
+  plot_theme
+```
+
+This view is useful for comparing behaviors, but it hides *when* the successes happened. A robot that succeeds only after many failed attempts tells a different story from one that succeeds immediately.
+
+## The evolution happens through repetition
+
+```{r}
+ggplot(learning_curve, aes(x = window, y = success_rate, color = color, group = task)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "#A8B7C3") +
+  geom_line(linewidth = 1.25) +
+  geom_point(size = 2.7) +
+  facet_wrap(~ task, nrow = 1) +
+  scale_color_identity() +
+  scale_x_continuous(breaks = c(10, 60, 120), expand = expansion(mult = c(0.04, 0.08))) +
+  scale_y_continuous(labels = percent, limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  labs(
+    title = "AI turns trial and error into a robotics learning curve",
+    subtitle = "Each point represents a later stage in the policy's evolution",
+    x = "Episodes attempted",
+    y = "Success rate"
+  ) +
+  plot_theme +
+  theme(strip.text = element_text(face = "bold", color = "#17324D", size = 11))
+```
+
+The upward pattern is the visual story of AI and robotics evolution: experience can turn uncertain actions into more reliable behavior. With the actual dataset, the next step would be to replace `episodes` with a table created from the environment logs, then compare success by task, seed, and training method.
+
+## What this makes me wonder
+
+It is remarkable that an AI policy can turn trial and error into physical skill. This is the larger evolution: robotics supplies the body, AI supplies an adaptable decision-maker, and simulation supplies a place to learn safely. But the same progress raises a human question: as robots take on more tasks, how will our work change, and what new kinds of work will we choose to do? A good final project can hold both ideas at once: measure what the robot learns, and ask what that learning means for people.
+
+::: {.callout-note}
+### Data note
+
+The plotted values are simulated with a fixed seed for demonstration. They should not be reported as findings about the OpenAI benchmark. For a final analysis, document the exact environment version, task definition, number of episodes, random seeds, and success metric.
+:::
